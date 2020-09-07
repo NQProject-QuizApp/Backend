@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Chat Room</title>
+</head>
+<body>
+    <textarea id="chat-log" cols="100" rows="20"></textarea><br>
+    type: <input id="chat-type-input" type="text" size="100"><br>
+    username: <input id="chat-username-input" type="text" size="100"><br>
+    game_code: <input id="chat-game_code-input" type="text" size="100"><br>
+    answer: <input id="chat-answer-input" type="text" size="100"><br>
+    <input id="chat-message-submit" type="button" value="Send">
+    {{ room_name|json_script:"room-name" }}
+    <script>
+        const roomName = JSON.parse(document.getElementById('room-name').textContent);
+        console.log('Start...');
+        const chatSocket = new WebSocket(
+            'ws://'
+            + window.location.host
+            + '/ws/game/'
+            + roomName
+            + '/'
+        );
+
+        chatSocket.onmessage = function(e) {
+            console.log('New message');
+            document.querySelector('#chat-log').value += (e.data + '\n');
+        };
+
+        chatSocket.onclose = function(e) {
+            console.error('Chat socket closed unexpectedly');
+        };
+
+
+
+        document.querySelector('#chat-message-submit').onclick = function(e) {
+            const typeInputDom = document.querySelector('#chat-type-input');
+            const type = typeInputDom.value;
+            const usernameInputDom = document.querySelector('#chat-username-input');
+            const username = usernameInputDom.value;
+            const game_codeInputDom = document.querySelector('#chat-game_code-input');
+            const game_code = game_codeInputDom.value;
+            const answerInputDom = document.querySelector('#chat-answer-input');
+            const answer = answerInputDom.value;
+            chatSocket.send(JSON.stringify({
+                'type': type,
+                'user': username,
+                'game_code': game_code,
+                'answer': answer
+            }));
+            typeInputDom.value = '';
+        };
+    </script>
+</body>
+</html>
