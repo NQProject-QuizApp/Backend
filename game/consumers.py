@@ -27,7 +27,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         text_data_json = json.loads(text_data)
         request = text_data_json['type']
 
-        print('Received: ' + request)
+        print('Received: ' + str(text_data_json))
         if request == 'new_game':
             username = text_data_json['user']
             await self.channel_layer.send(
@@ -104,6 +104,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'scores': f"{event['scores']}",
         }))
         await self.leave_group()
+
+    async def send(self, text_data=None, bytes_data=None, close=False):
+        print('Sent: ' + text_data)
+        await super().send(text_data, bytes_data, close)
 
 
 """ GameWorker - manages all active games """
