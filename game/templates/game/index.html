@@ -9,6 +9,7 @@
     type: <input id="chat-type-input" type="text" size="100"><br>
     username: <input id="chat-username-input" type="text" size="100"><br>
     game_code: <input id="chat-game_code-input" type="text" size="100"><br>
+    question_id: <input id="chat-question_id-input" type="text" size="100"><br>
     answer: <input id="chat-answer-input" type="text" size="100"><br>
     <input id="chat-message-submit" type="button" value="Send">
     {{ room_name|json_script:"room-name" }}
@@ -43,10 +44,13 @@
             const game_code = game_codeInputDom.value;
             const answerInputDom = document.querySelector('#chat-answer-input');
             const answer = answerInputDom.value;
+            const question_idInputDom = document.querySelector('#chat-question_id-input');
+            const question_id = question_idInputDom.value;
             const json_message = JSON.stringify({
                 'type': type,
                 'user': username,
                 'game_code': game_code,
+                'question_id': question_id,
                 'answer': answer
             });
             document.querySelector('#chat-log').value += ('Client > ' + json_message + '\n');

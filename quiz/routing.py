@@ -1,6 +1,6 @@
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter, ChannelNameRouter
-from game.consumers import GameWorker
+from game.game_logic.game_manager import GameWorker
 import game.routing
 
 application = ProtocolTypeRouter({
