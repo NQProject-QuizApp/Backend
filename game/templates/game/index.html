@@ -15,8 +15,10 @@
     <script>
         const roomName = JSON.parse(document.getElementById('room-name').textContent);
         console.log('Start...');
-        const chatSocket = new WebSocket(
-            'ws://'
+        var ws_scheme = window.location.protocol == "https:" ? "wss" : "ws";
+        var chatSocket = new WebSocket(
+            ws_scheme
+            + '://'
             + window.location.host
             + '/ws/game/'
         );
