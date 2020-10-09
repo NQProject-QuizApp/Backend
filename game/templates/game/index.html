@@ -55,7 +55,6 @@
             });
             document.querySelector('#chat-log').value += ('Client > ' + json_message + '\n');
             chatSocket.send(json_message);
-            typeInputDom.value = '';
         };
     </script>
 </body>

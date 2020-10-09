@@ -70,20 +70,24 @@ class GameWorker(AsyncConsumer):
         game_code = event['game_code']
         answer = int(event['answer'])
         question_id = int(event['question_id'])
-        if question_id == self.current_question['id'] and answer == self.current_question['correct_answer']:
-            await self.channel_layer.group_send(
-                game_code,
-                {
-                    'type': 'question_end',
-                    'question_id': self.current_question['id'],
-                    'correct_answer': True,
-                }
-            )
-            self.active_games[game_code].add_score(username, question_id, 10)
+        if question_id == self.current_question['id']:
+            score = 0
+            if answer == self.current_question['correct_answer']:
+                score = 10
+            if self.active_games[game_code].set_answer(username, question_id, score):  # If first try, send result
+                await self.channel_layer.group_send(
+                    game_code,
+                    {
+                        'type': 'question_end',
+                        'question_id': self.current_question['id'],
+                        'correct_answer': True if score > 0 else False,
+                    }
+                )
 
     async def start_game(self, event):
         game_code = event['game_code']
-        asyncio.create_task(self.run_game(game_code))
+        if self.active_games[game_code].start_game():
+            asyncio.create_task(self.run_game(game_code))
 
     async def ask_question(self, game_code, question_id):
         self.current_question = {
@@ -133,6 +137,12 @@ class GameState:
         self.users = []
         self.running = False
 
+    def start_game(self):
+        if self.running:
+            return False
+        self.running = True
+        return True
+
     def add_user(self, username):
         self.users.append({"user": username, "answers": []})
 
@@ -148,15 +158,19 @@ class GameState:
             score += q['score']
         return score
 
-    def add_score(self, username, question_id, score):
+    def set_answer(self, username, question_id, score):
         user = self.get_user(username)
-        user["answers"].append({"question_id": question_id, "score": score})
+        for q in user['answers']:
+            if q['question_id'] == question_id:
+                return False
+        user['answers'].append({"question_id": question_id, "score": score})
+        return True
 
     def check_if_user_was_right(self, username, question_id):
         user = self.get_user(username)
         for q in user['answers']:
             if q['question_id'] == question_id:
-                if q['score']:
+                if q['score'] > 0:
                     return True
                 return False
         return False
