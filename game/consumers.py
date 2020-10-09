@@ -87,6 +87,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'username': event['username']
         }))
 
+    async def error(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'error',
+            'msg': event['msg']
+        }))
+
     async def game_started(self, event):
         await self.send(text_data=json.dumps({
             'type': 'game_started',
