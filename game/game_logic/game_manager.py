@@ -31,7 +31,7 @@ class GameWorker(AsyncConsumer):
         username = event['username']
         channel_name = event['channel_name']
         self.active_games[game_code] = GameState(game_code)
-        self.active_games[game_code].add_user(username)
+        self.active_games[game_code].add_user(channel_name, username)
         await self.channel_layer.group_add(
             game_code,
             channel_name
@@ -51,12 +51,24 @@ class GameWorker(AsyncConsumer):
         game_code = event['game_code']
         channel_name = event['channel_name']
         username = event['username']
-        self.active_games[game_code].add_user(username)
-        users = self.active_games[game_code].get_users()
+        success, new_username = self.active_games[game_code].add_user(channel_name, username)
+        if not success:
+            await self.send_error(channel_name, 'Error when adding user')
+            return
+
         await self.channel_layer.group_add(
             game_code,
             channel_name
         )
+        users = self.active_games[game_code].get_users()
+        await self.channel_layer.send(
+            channel_name,
+            {
+                "type": "join_successful",
+                "username": new_username,
+            },
+        )
+
         await self.channel_layer.group_send(
             game_code,
             {
@@ -65,8 +77,17 @@ class GameWorker(AsyncConsumer):
             },
         )
 
+    async def send_error(self, channel_name, msg):
+        await self.channel_layer.send(
+            channel_name,
+            {
+                "type": "error",
+                "msg": msg,
+            },
+        )
+
     async def submit_answer(self, event):
-        username = event['username']
+        channel_name = event['channel_name']
         game_code = event['game_code']
         answer = int(event['answer'])
         question_id = int(event['question_id'])
@@ -74,9 +95,9 @@ class GameWorker(AsyncConsumer):
             score = 0
             if answer == self.current_question['correct_answer']:
                 score = 10
-            if self.active_games[game_code].set_answer(username, question_id, score):  # If first try, send result
-                await self.channel_layer.group_send(
-                    game_code,
+            if self.active_games[game_code].set_answer(channel_name, question_id, score):  # If first try, send result
+                await self.channel_layer.send(
+                    channel_name,
                     {
                         'type': 'question_end',
                         'question_id': self.current_question['id'],
@@ -143,14 +164,28 @@ class GameState:
         self.running = True
         return True
 
-    def add_user(self, username):
-        self.users.append({"user": username, "answers": []})
-
-    def get_user(self, username):
+    def is_username_available(self, username):
         for u in self.users:
-            if u["user"] == username:
+            if u["username"] == username:
+                return False
+        return True
+
+    def add_user(self, channel_name, username):
+        if self.get_user(channel_name):
+            return False, None
+        if not self.is_username_available(username):
+            index = 2
+            while not self.is_username_available(username + f" #{index}"):
+                index += 1
+            username = username + f" #{index}"
+        self.users.append({"channel_name": channel_name, 'username': username, "answers": []})
+        return True, username
+
+    def get_user(self, channel_name):
+        for u in self.users:
+            if u["channel_name"] == channel_name:
                 return u
-        raise AttributeError
+        return None
 
     def count_user_score(self, user):
         score = 0
@@ -158,16 +193,16 @@ class GameState:
             score += q['score']
         return score
 
-    def set_answer(self, username, question_id, score):
-        user = self.get_user(username)
+    def set_answer(self, channel_name, question_id, score):
+        user = self.get_user(channel_name)
         for q in user['answers']:
             if q['question_id'] == question_id:
                 return False
         user['answers'].append({"question_id": question_id, "score": score})
         return True
 
-    def check_if_user_was_right(self, username, question_id):
-        user = self.get_user(username)
+    def check_if_user_was_right(self, channel_name, question_id):
+        user = self.get_user(channel_name)
         for q in user['answers']:
             if q['question_id'] == question_id:
                 if q['score'] > 0:
@@ -176,7 +211,7 @@ class GameState:
         return False
 
     def get_all_scores(self):
-        return [{'user': u['user'], 'score': self.count_user_score(u)} for u in self.users]
+        return [{'user': u['username'], 'score': self.count_user_score(u)} for u in self.users]
 
     def get_users(self):
-        return [u["user"] for u in self.users]
+        return [u["username"] for u in self.users]

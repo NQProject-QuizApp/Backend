@@ -60,7 +60,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 },
             )
         elif request == 'answer':
-            username = text_data_json['user']
             game_code = text_data_json['game_code']
             answer = text_data_json['answer']
             question_id = text_data_json["question_id"]
@@ -68,7 +67,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "game-manager",
                 {
                     "type": "submit_answer",
-                    "username": username,
+                    "channel_name": self.channel_name,
                     "game_code": game_code,
                     "question_id": question_id,
                     "answer": answer,
@@ -80,6 +79,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps({
             'type': 'game_created',
             'code': event['game_code']
+        }))
+
+    async def join_successful(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'join_successful',
+            'username': event['username']
         }))
 
     async def game_started(self, event):
