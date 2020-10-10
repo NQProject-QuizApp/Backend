@@ -154,6 +154,9 @@ class GameWorker(AsyncConsumer):
         if game_code not in self.active_games:  # If game does not exist
             await self._send_error(channel_name, f"Game with code {game_code} does not exist")
             return
+        elif self.active_games[game_code].is_game_running():
+            await self._send_error(channel_name, f"Game with code {game_code} is running already")
+            return
 
         new_username = await self._add_player_to_game(channel_name, username, game_code)
 
@@ -176,9 +179,11 @@ class GameWorker(AsyncConsumer):
 
     async def remove_user(self, event):
         channel_name = event['channel_name']
-        if channel_name in self.current_players:
+        if channel_name not in self.current_players:
             await self._send_error(channel_name, "You are not in a game")
             return
+        if not self.active_games[self.current_players[channel_name]].is_game_running():
+            self.active_games[self.current_players[channel_name]].remove_user(channel_name)
         await self._remove_player_from_game(channel_name)
 
     async def submit_answer(self, event):
@@ -247,6 +252,9 @@ class GameState:
         self.running = True
         return True
 
+    def is_game_running(self):
+        return self.running
+
     def is_username_available(self, username):
         for u in self.users:
             if u["username"] == username:
@@ -261,6 +269,10 @@ class GameState:
             username = username + f" #{index}"
         self.users.append({"channel_name": channel_name, 'username': username, "answers": []})
         return username
+
+    def remove_user(self, channel_name):
+        self.users.remove(self.get_user(channel_name))
+        return
 
     def get_user(self, channel_name):
         for u in self.users:

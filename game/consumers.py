@@ -75,7 +75,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "answer": answer,
                 },
             )
-            pass
+        elif request_type == 'leave':
+            await self.channel_layer.send(
+                "game-manager",
+                {
+                    "type": "remove_user",
+                    "channel_name": self.channel_name,
+                },
+            )
 
     async def game_created(self, event):
         await self.send(text_data=json.dumps({
