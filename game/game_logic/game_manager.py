@@ -111,23 +111,43 @@ class GameWorker(AsyncConsumer):
             asyncio.create_task(self.run_game(game_code))
 
     async def ask_question(self, game_code, question_id):
-        self.current_question = {
-            'id': question_id,
-            'time': self.QUESTION_LENGTH,
-            'content': 'What year is now?',
-            'answers': ['2020', '2024', '2019', '2018'],
-            'correct_answer': 0
-        }
-        await self.channel_layer.group_send(
-            game_code,
-            {
-                'type': 'ask_question',
-                'question_id': self.current_question['id'],
-                'time': self.current_question['time'],
-                'question': self.current_question['content'],
-                'answers': self.current_question['answers']
+        if question_id % 2:
+            self.current_question = {
+                'id': question_id,
+                'time': self.QUESTION_LENGTH,
+                'content': 'What year is now?',
+                'answers': ['2020', '2024', '2019', '2018'],
+                'correct_answer': 0
             }
-        )
+            await self.channel_layer.group_send(
+                game_code,
+                {
+                    'type': 'ask_question',
+                    'question_id': self.current_question['id'],
+                    'time': self.current_question['time'],
+                    'question': self.current_question['content'] + ' #' + str(question_id),
+                    'answers': self.current_question['answers']
+                }
+            )
+        else:
+            self.current_question = {
+                'id': question_id,
+                'time': self.QUESTION_LENGTH,
+                'content': 'What month is now?',
+                'answers': ['September', 'October', 'July', 'May'],
+                'correct_answer': 1
+            }
+            await self.channel_layer.group_send(
+                game_code,
+                {
+                    'type': 'ask_question',
+                    'question_id': self.current_question['id'],
+                    'time': self.current_question['time'],
+                    'question': self.current_question['content'] + ' #' + str(question_id),
+                    'answers': self.current_question['answers']
+                }
+            )
+
         await asyncio.sleep(self.current_question['time'])
 
     async def run_game(self, game_code):
@@ -146,7 +166,7 @@ class GameWorker(AsyncConsumer):
             game_code,
             {
                 'type': 'game_ended',
-                'scores': f"{self.active_games[game_code].get_all_scores()}"
+                'scores': self.active_games[game_code].get_all_scores()
             }
         )
         self.remove_game(game_code)
