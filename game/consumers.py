@@ -9,27 +9,32 @@ from channels.generic.websocket import AsyncWebsocketConsumer, WebsocketConsumer
 
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.room_group_name = None
         await self.accept()
 
-    async def leave_group(self):
-        if self.room_group_name:
-            await self.channel_layer.group_discard(
-                self.room_group_name,
-                self.channel_name
-            )
+    async def _leave_group(self):
+        await self.channel_layer.send(
+            "game-manager",
+            {
+                "type": "remove_user",
+                "channel_name": self.channel_name,
+            })
 
     async def disconnect(self, close_code):
-        await self.leave_group()
+        await self._leave_group()
 
     # Receive message from WebSocket
     async def receive(self, text_data=None, bytes_data=None):
+        if text_data is None:
+            return
+
         text_data_json = json.loads(text_data)
-        request = text_data_json['type']
+        request_type = text_data_json.get('type', None)
+        if not request_type:
+            return
 
         print('Received: ' + str(text_data_json))
-        if request == 'new_game':
-            username = text_data_json['user']
+        if request_type == 'new_game':
+            username = text_data_json.get('user', None)
             await self.channel_layer.send(
                 "game-manager",
                 {
@@ -38,9 +43,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "username": username,
                 },
             )
-        elif request == 'join':
-            username = text_data_json['user']
-            game_code = text_data_json['game_code']
+        elif request_type == 'join':
+            username = text_data_json.get('user', None)
+            game_code = text_data_json.get('game_code', None)
             await self.channel_layer.send(
                 "game-manager",
                 {
@@ -50,25 +55,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "username": username,
                 },
             )
-        elif request == 'start':
-            game_code = text_data_json['game_code']
+        elif request_type == 'start':
             await self.channel_layer.send(
                 "game-manager",
                 {
                     "type": "start_game",
-                    "game_code": game_code,
+                    "channel_name": self.channel_name,
                 },
             )
-        elif request == 'answer':
-            game_code = text_data_json['game_code']
-            answer = text_data_json['answer']
-            question_id = text_data_json["question_id"]
+        elif request_type == 'answer':
+            answer = text_data_json.get('answer', None)
+            question_id = text_data_json.get('question_id', None)
             await self.channel_layer.send(
                 "game-manager",
                 {
                     "type": "submit_answer",
                     "channel_name": self.channel_name,
-                    "game_code": game_code,
                     "question_id": question_id,
                     "answer": answer,
                 },
@@ -119,14 +121,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'question_id': event['question_id'],
             'correct_answer': event['correct_answer'],
         }))
-        await self.leave_group()
+        await self._leave_group()
 
     async def game_ended(self, event):
         await self.send(text_data=json.dumps({
             'type': 'quiz_end',
             'scores': event['scores'],
         }))
-        await self.leave_group()
+        await self._leave_group()
 
     async def send(self, text_data=None, bytes_data=None, close=False):
         print('Sent: ' + text_data)

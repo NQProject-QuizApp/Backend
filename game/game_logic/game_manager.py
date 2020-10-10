@@ -16,68 +16,36 @@ class GameWorker(AsyncConsumer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.active_games = {}
+        self.current_players = {}  # {'player_channel_name': 'game_code', ...}
         self.current_question = None
         print('GameWorker started.')
 
-    def get_new_game_code(self):
+    def _get_new_game_code(self):
         while True:
             code = random.randint(0, 99)
             if not self.active_games.get(code, None):
                 return str(code)
 
-    async def create_game(self, event):
-        print('Creating game')
-        game_code = self.get_new_game_code()
-        username = event['username']
-        channel_name = event['channel_name']
-        self.active_games[game_code] = GameState(game_code)
-        self.active_games[game_code].add_user(channel_name, username)
-        await self.channel_layer.group_add(
-            game_code,
-            channel_name
-        )
-        await self.channel_layer.send(
-            channel_name,
-            {
-                "type": "game_created",
-                "game_code": game_code,
-            },
-        )
+    async def _remove_player_from_game(self, channel_name):
+        await self.channel_layer.group_discard(self.current_players[channel_name], channel_name)
+        del self.current_players[channel_name]
 
-    def remove_game(self, game_code):
-        self.active_games.pop(game_code)
+    async def _add_player_to_game(self, channel_name, username, game_code):
+        new_username = self.active_games[game_code].add_user(channel_name, username)
+        self.current_players[channel_name] = game_code
+        await self.channel_layer.group_add(game_code, channel_name)
+        return new_username
 
-    async def add_user(self, event):
-        game_code = event['game_code']
-        channel_name = event['channel_name']
-        username = event['username']
-        success, new_username = self.active_games[game_code].add_user(channel_name, username)
-        if not success:
-            await self.send_error(channel_name, 'Error when adding user')
-            return
-
-        await self.channel_layer.group_add(
-            game_code,
-            channel_name
-        )
-        users = self.active_games[game_code].get_users()
-        await self.channel_layer.send(
-            channel_name,
-            {
-                "type": "join_successful",
-                "username": new_username,
-            },
-        )
-
+    async def _remove_game(self, game_code):
         await self.channel_layer.group_send(
             game_code,
             {
-                "type": "show_users",
-                "users": users,
+                "type": "close",
             },
         )
+        self.active_games.pop(game_code)
 
-    async def send_error(self, channel_name, msg):
+    async def _send_error(self, channel_name, msg):
         await self.channel_layer.send(
             channel_name,
             {
@@ -86,31 +54,7 @@ class GameWorker(AsyncConsumer):
             },
         )
 
-    async def submit_answer(self, event):
-        channel_name = event['channel_name']
-        game_code = event['game_code']
-        answer = int(event['answer'])
-        question_id = int(event['question_id'])
-        if question_id == self.current_question['id']:
-            score = 0
-            if answer == self.current_question['correct_answer']:
-                score = 10
-            if self.active_games[game_code].set_answer(channel_name, question_id, score):  # If first try, send result
-                await self.channel_layer.send(
-                    channel_name,
-                    {
-                        'type': 'question_end',
-                        'question_id': self.current_question['id'],
-                        'correct_answer': True if score > 0 else False,
-                    }
-                )
-
-    async def start_game(self, event):
-        game_code = event['game_code']
-        if self.active_games[game_code].start_game():
-            asyncio.create_task(self.run_game(game_code))
-
-    async def ask_question(self, game_code, question_id):
+    async def _ask_question(self, game_code, question_id):
         if question_id % 2:
             self.current_question = {
                 'id': question_id,
@@ -150,7 +94,7 @@ class GameWorker(AsyncConsumer):
 
         await asyncio.sleep(self.current_question['time'])
 
-    async def run_game(self, game_code):
+    async def _run_game(self, game_code):
         await self.channel_layer.group_send(
             game_code,
             {
@@ -159,7 +103,7 @@ class GameWorker(AsyncConsumer):
         )
 
         for q in range(3):
-            await self.ask_question(game_code, q)
+            await self._ask_question(game_code, q)
 
         await self.channel_layer.group_send(
             game_code,
@@ -168,7 +112,127 @@ class GameWorker(AsyncConsumer):
                 'scores': self.active_games[game_code].get_all_scores()
             }
         )
-        self.remove_game(game_code)
+        await self._remove_game(game_code)
+
+    async def create_game(self, event):
+        username = event['username']
+        channel_name = event['channel_name']
+        game_code = self._get_new_game_code()
+
+        if not username:
+            await self._send_error(channel_name, "Some data is missing")
+            return
+
+        if channel_name in self.current_players:
+            await self._remove_player_from_game(channel_name)
+
+        self.active_games[game_code] = GameState(game_code)
+        await self._add_player_to_game(channel_name, username, game_code)
+        await self.channel_layer.send(
+            channel_name,
+            {
+                "type": "game_created",
+                "game_code": game_code,
+            },
+        )
+
+    async def add_user(self, event):
+        channel_name = event['channel_name']
+        username = event['username']
+        game_code = event['game_code']
+
+        if not username or game_code is None:
+            await self._send_error(channel_name, "Some data is missing")
+            return
+
+        if channel_name in self.current_players:
+            if self.current_players[channel_name] == game_code:
+                await self._send_error(channel_name, 'You are in this game already')
+                return
+            await self._remove_player_from_game(channel_name)
+
+        if game_code not in self.active_games:  # If game does not exist
+            await self._send_error(channel_name, f"Game with code {game_code} does not exist")
+            return
+
+        new_username = await self._add_player_to_game(channel_name, username, game_code)
+
+        await self.channel_layer.send(
+            channel_name,
+            {
+                "type": "join_successful",
+                "username": new_username,
+            },
+        )
+
+        users = self.active_games[game_code].get_users()
+        await self.channel_layer.group_send(
+            game_code,
+            {
+                "type": "show_users",
+                "users": users,
+            },
+        )
+
+    async def remove_user(self, event):
+        channel_name = event['channel_name']
+        if channel_name in self.current_players:
+            await self._send_error(channel_name, "You are not in a game")
+            return
+        await self._remove_player_from_game(channel_name)
+
+    async def submit_answer(self, event):
+        channel_name = event['channel_name']
+
+        if channel_name in self.current_players:
+            await self._send_error(channel_name, "You are not in a game")
+            return
+
+        try:
+            question_id = int(event['question_id'])
+        except Exception as e:
+            await self._send_error(channel_name, "Wrong question id")
+            return
+
+        if question_id != self.current_question['id']:
+            if self.current_question['id'] > question_id >= 0:
+                await self._send_error(channel_name, "Question already ended")
+                return
+            else:
+                await self._send_error(channel_name, "Wrong question id")
+                return
+
+        try:
+            answer = int(event['answer'])
+        except Exception as e:
+            await self._send_error(channel_name, "Wrong answer format")
+            return
+
+        score = 0
+        if answer == self.current_question['correct_answer']:
+            score = 10
+        game_code = self.current_players[channel_name]
+        if self.active_games[game_code].set_answer(channel_name, question_id, score):  # If first try, send result
+            await self.channel_layer.send(
+                channel_name,
+                {
+                    'type': 'question_end',
+                    'question_id': self.current_question['id'],
+                    'correct_answer': True if score > 0 else False,
+                }
+            )
+
+    async def start_game(self, event):
+        channel_name = event['channel_name']
+        if channel_name not in self.current_players:
+            await self._send_error(channel_name, "You are not in a game")
+            return
+
+        game_code = self.current_players[channel_name]
+        if self.active_games[game_code].start_game():  # If starting game was successful (game is not running yet)
+            asyncio.create_task(self._run_game(game_code))
+        else:
+            await self._send_error(channel_name, "Game is running already")
 
 
 class GameState:
@@ -190,15 +254,13 @@ class GameState:
         return True
 
     def add_user(self, channel_name, username):
-        if self.get_user(channel_name):
-            return False, None
         if not self.is_username_available(username):
             index = 2
             while not self.is_username_available(username + f" #{index}"):
                 index += 1
             username = username + f" #{index}"
         self.users.append({"channel_name": channel_name, 'username': username, "answers": []})
-        return True, username
+        return username
 
     def get_user(self, channel_name):
         for u in self.users:
