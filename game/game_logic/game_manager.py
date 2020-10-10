@@ -21,7 +21,7 @@ class GameWorker(AsyncConsumer):
 
     def get_new_game_code(self):
         while True:
-            code = random.randint(0, 999999)
+            code = random.randint(0, 99)
             if not self.active_games.get(code, None):
                 return str(code)
 
@@ -159,7 +159,6 @@ class GameWorker(AsyncConsumer):
         )
 
         for q in range(3):
-            await asyncio.sleep(2)
             await self.ask_question(game_code, q)
 
         await self.channel_layer.group_send(
