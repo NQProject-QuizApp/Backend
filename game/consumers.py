@@ -76,13 +76,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 },
             )
         elif request_type == 'leave':
-            await self.channel_layer.send(
-                "game-manager",
-                {
-                    "type": "remove_user",
-                    "channel_name": self.channel_name,
-                },
-            )
+            await self._leave_group()
 
     async def game_created(self, event):
         await self.send(text_data=json.dumps({
@@ -128,14 +122,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'question_id': event['question_id'],
             'correct_answer': event['correct_answer'],
         }))
-        await self._leave_group()
 
     async def game_ended(self, event):
         await self.send(text_data=json.dumps({
             'type': 'quiz_end',
             'scores': event['scores'],
         }))
-        await self._leave_group()
 
     async def send(self, text_data=None, bytes_data=None, close=False):
         print('Sent: ' + text_data)

@@ -2,8 +2,11 @@ import asyncio
 import json
 import random
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import sync_to_async
 from channels.consumer import SyncConsumer, AsyncConsumer
+from channels.db import database_sync_to_async
+
+from game.models import Question
 from channels.generic.websocket import AsyncWebsocketConsumer, WebsocketConsumer
 
 
@@ -27,6 +30,7 @@ class GameWorker(AsyncConsumer):
                 return str(code)
 
     async def _remove_player_from_game(self, channel_name):
+        self.active_games[self.current_players[channel_name]].remove_user(channel_name)
         await self.channel_layer.group_discard(self.current_players[channel_name], channel_name)
         del self.current_players[channel_name]
 
@@ -37,12 +41,9 @@ class GameWorker(AsyncConsumer):
         return new_username
 
     async def _remove_game(self, game_code):
-        await self.channel_layer.group_send(
-            game_code,
-            {
-                "type": "close",
-            },
-        )
+        players = self.active_games[game_code].get_list_of_users_channels()
+        for p in players:
+            await self._remove_player_from_game(p)
         self.active_games.pop(game_code)
 
     async def _send_error(self, channel_name, msg):
@@ -54,45 +55,26 @@ class GameWorker(AsyncConsumer):
             },
         )
 
-    async def _ask_question(self, game_code, question_id):
-        if question_id % 2:
-            self.current_question = {
-                'id': question_id,
-                'time': self.QUESTION_LENGTH,
-                'content': 'What year is now?',
-                'answers': ['2020', '2024', '2019', '2018'],
-                'correct_answer': 0
-            }
-            await self.channel_layer.group_send(
-                game_code,
-                {
-                    'type': 'ask_question',
-                    'question_id': self.current_question['id'],
-                    'time': self.current_question['time'],
-                    'question': self.current_question['content'] + ' #' + str(question_id),
-                    'answers': self.current_question['answers']
-                }
-            )
-        else:
-            self.current_question = {
-                'id': question_id,
-                'time': self.QUESTION_LENGTH,
-                'content': 'What month is now?',
-                'answers': ['September', 'October', 'July', 'May'],
-                'correct_answer': 1
-            }
-            await self.channel_layer.group_send(
-                game_code,
-                {
-                    'type': 'ask_question',
-                    'question_id': self.current_question['id'],
-                    'time': self.current_question['time'],
-                    'question': self.current_question['content'] + ' #' + str(question_id),
-                    'answers': self.current_question['answers']
-                }
-            )
+    async def _ask_question(self, game_code, question, question_id):
+        self.current_question = {'id': question_id, 'correct_answer': question.correct_answer}
 
-        await asyncio.sleep(self.current_question['time'])
+        await self.channel_layer.group_send(
+            game_code,
+            {
+                'type': 'ask_question',
+                'question_id': question_id,
+                'time': self.QUESTION_LENGTH,
+                'question': question.content,
+                'answers': question.answers
+            }
+        )
+
+        await asyncio.sleep(self.QUESTION_LENGTH)
+
+    async def _get_random_questions(self, amount):
+        questions = await database_sync_to_async(Question.objects.all().order_by)('?')
+        random_questions = await sync_to_async(list)(questions[:amount])
+        return random_questions
 
     async def _run_game(self, game_code):
         await self.channel_layer.group_send(
@@ -102,8 +84,10 @@ class GameWorker(AsyncConsumer):
             }
         )
 
-        for q in range(3):
-            await self._ask_question(game_code, q)
+        questions = await self._get_random_questions(3)
+
+        for i, q in enumerate(questions):
+            await self._ask_question(game_code, q, i)
 
         await self.channel_layer.group_send(
             game_code,
@@ -168,7 +152,7 @@ class GameWorker(AsyncConsumer):
             },
         )
 
-        users = self.active_games[game_code].get_users()
+        users = self.active_games[game_code].get_list_of_usernames()
         await self.channel_layer.group_send(
             game_code,
             {
@@ -182,14 +166,12 @@ class GameWorker(AsyncConsumer):
         if channel_name not in self.current_players:
             await self._send_error(channel_name, "You are not in a game")
             return
-        if not self.active_games[self.current_players[channel_name]].is_game_running():
-            self.active_games[self.current_players[channel_name]].remove_user(channel_name)
         await self._remove_player_from_game(channel_name)
 
     async def submit_answer(self, event):
         channel_name = event['channel_name']
 
-        if channel_name in self.current_players:
+        if channel_name not in self.current_players:
             await self._send_error(channel_name, "You are not in a game")
             return
 
@@ -306,5 +288,8 @@ class GameState:
     def get_all_scores(self):
         return [{'user': u['username'], 'score': self.count_user_score(u)} for u in self.users]
 
-    def get_users(self):
+    def get_list_of_usernames(self):
         return [u["username"] for u in self.users]
+
+    def get_list_of_users_channels(self):
+        return [u["channel_name"] for u in self.users]
