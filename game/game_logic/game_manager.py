@@ -6,9 +6,9 @@ from asgiref.sync import sync_to_async
 from channels.consumer import SyncConsumer, AsyncConsumer
 from channels.db import database_sync_to_async
 
+from game.game_logic.game_state import GameState
 from game.models import Question
 from channels.generic.websocket import AsyncWebsocketConsumer, WebsocketConsumer
-
 
 """ GameWorker - manages all active games """
 
@@ -56,7 +56,7 @@ class GameWorker(AsyncConsumer):
         )
 
     async def _ask_question(self, game_code, question, question_id):
-        self.current_question = {'id': question_id, 'correct_answer': question.correct_answer}
+        self.active_games[game_code].current_question = {'id': question_id, 'correct_answer': question.correct_answer}
 
         await self.channel_layer.group_send(
             game_code,
@@ -70,6 +70,18 @@ class GameWorker(AsyncConsumer):
         )
 
         await asyncio.sleep(self.QUESTION_LENGTH)
+        self.active_games[game_code].current_question = None
+        players = self.active_games[game_code].get_list_of_users_channels()
+        for player_channel in players:
+            await self.channel_layer.send(
+                player_channel,
+                {
+                    'type': 'question_end',
+                    'question_id': question_id,
+                    'correct_answer': self.active_games[game_code].check_if_user_was_right(
+                        player_channel, question_id),
+                }
+            )
 
     async def _get_random_questions(self, amount):
         questions = await database_sync_to_async(Question.objects.all().order_by)('?')
@@ -88,6 +100,7 @@ class GameWorker(AsyncConsumer):
 
         for i, q in enumerate(questions):
             await self._ask_question(game_code, q, i)
+            await asyncio.sleep(5)
 
         await self.channel_layer.group_send(
             game_code,
@@ -175,19 +188,18 @@ class GameWorker(AsyncConsumer):
             await self._send_error(channel_name, "You are not in a game")
             return
 
+        game = self.active_games[self.current_players[channel_name]]
+
         try:
             question_id = int(event['question_id'])
         except Exception as e:
-            await self._send_error(channel_name, "Wrong question id")
+            await self._send_error(channel_name, "Question id is not a number")
             return
 
-        if question_id != self.current_question['id']:
-            if self.current_question['id'] > question_id >= 0:
-                await self._send_error(channel_name, "Question already ended")
-                return
-            else:
-                await self._send_error(channel_name, "Wrong question id")
-                return
+        # TODO: Better error messages
+        if not game.current_question or question_id != game.current_question['id']:
+            await self._send_error(channel_name, "Wrong question id")
+            return
 
         try:
             answer = int(event['answer'])
@@ -196,18 +208,9 @@ class GameWorker(AsyncConsumer):
             return
 
         score = 0
-        if answer == self.current_question['correct_answer']:
+        if answer == game.current_question['correct_answer']:
             score = 10
-        game_code = self.current_players[channel_name]
-        if self.active_games[game_code].set_answer(channel_name, question_id, score):  # If first try, send result
-            await self.channel_layer.send(
-                channel_name,
-                {
-                    'type': 'question_end',
-                    'question_id': self.current_question['id'],
-                    'correct_answer': True if score > 0 else False,
-                }
-            )
+        game.set_answer(channel_name, question_id, score)
 
     async def start_game(self, event):
         channel_name = event['channel_name']
@@ -220,76 +223,3 @@ class GameWorker(AsyncConsumer):
             asyncio.create_task(self._run_game(game_code))
         else:
             await self._send_error(channel_name, "Game is running already")
-
-
-class GameState:
-    def __init__(self, code):
-        self.code = code
-        self.users = []
-        self.running = False
-
-    def start_game(self):
-        if self.running:
-            return False
-        self.running = True
-        return True
-
-    def is_game_running(self):
-        return self.running
-
-    def is_username_available(self, username):
-        for u in self.users:
-            if u["username"] == username:
-                return False
-        return True
-
-    def add_user(self, channel_name, username):
-        if not self.is_username_available(username):
-            index = 2
-            while not self.is_username_available(username + f" #{index}"):
-                index += 1
-            username = username + f" #{index}"
-        self.users.append({"channel_name": channel_name, 'username': username, "answers": []})
-        return username
-
-    def remove_user(self, channel_name):
-        self.users.remove(self.get_user(channel_name))
-        return
-
-    def get_user(self, channel_name):
-        for u in self.users:
-            if u["channel_name"] == channel_name:
-                return u
-        return None
-
-    def count_user_score(self, user):
-        score = 0
-        for q in user['answers']:
-            score += q['score']
-        return score
-
-    def set_answer(self, channel_name, question_id, score):
-        user = self.get_user(channel_name)
-        for q in user['answers']:
-            if q['question_id'] == question_id:
-                return False
-        user['answers'].append({"question_id": question_id, "score": score})
-        return True
-
-    def check_if_user_was_right(self, channel_name, question_id):
-        user = self.get_user(channel_name)
-        for q in user['answers']:
-            if q['question_id'] == question_id:
-                if q['score'] > 0:
-                    return True
-                return False
-        return False
-
-    def get_all_scores(self):
-        return [{'user': u['username'], 'score': self.count_user_score(u)} for u in self.users]
-
-    def get_list_of_usernames(self):
-        return [u["username"] for u in self.users]
-
-    def get_list_of_users_channels(self):
-        return [u["channel_name"] for u in self.users]
