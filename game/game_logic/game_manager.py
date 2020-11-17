@@ -45,7 +45,8 @@ class GameWorker(AsyncConsumer):
         print("Removing game...")
         players = self.active_games[game_code].game_state.get_list_of_users_channels()
         for p in players:
-            await self._remove_player_from_game(p)
+            await self.channel_layer.group_discard(game_code, p)
+            del self.current_players[p]
         self.active_games.pop(game_code)
 
     async def _send_error(self, channel_name, msg):

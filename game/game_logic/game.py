@@ -104,11 +104,11 @@ class Game:
 # Public:
 
     async def remove_player(self, channel_name):
-        self.game_state.remove_user(channel_name)
+        self.game_state.players.pop(channel_name)
         await self.channel_layer.group_discard(self.game_code, channel_name)
         # del self.current_players[channel_name]  TODO: call it in game_manager
 
-        if len(self.game_state.users) == 0:
+        if len(self.game_state.players) == 0 and not self.game_state.running:
             await self.on_game_end(self.game_code)
             return
 
