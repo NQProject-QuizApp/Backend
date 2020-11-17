@@ -27,6 +27,13 @@
         chatSocket.onmessage = function(e) {
             console.log('New message');
             document.querySelector('#chat-log').value += ('Server > ' + e.data + '\n');
+            msg = JSON.parse(e.data)
+            if(msg.type == 'game_created'){
+                game_code = msg.code
+                console.log('game code: ' + game_code)
+                const game_codeInputDom = document.querySelector('#chat-game_code-input');
+                game_codeInputDom.value = game_code;
+            }
         };
 
         chatSocket.onclose = function(e) {

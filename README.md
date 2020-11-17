@@ -8,7 +8,7 @@ Backend for quiz application.
 * To install ale required dependencies: `pip install -r requirements.txt`
 
 #### Docker:
-Channels features require Redis to run. To achieve this, Docker is one of the easy ways.
+Channels features require Redis to run. This can be achieved with Docker.
 
 Download and install Docker from here: https://www.docker.com/get-started
 

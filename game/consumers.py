@@ -22,7 +22,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         await self._leave_group()
 
-    # Receive message from WebSocket
     async def receive(self, text_data=None, bytes_data=None):
         if text_data is None:
             return
