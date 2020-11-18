@@ -1,16 +1,8 @@
-import asyncio
-import json
 import random
-import time
 
-from asgiref.sync import sync_to_async
-from channels.consumer import SyncConsumer, AsyncConsumer
-from channels.db import database_sync_to_async
-
+from channels.consumer import AsyncConsumer
 from game.game_logic.game import Game
-from game.game_logic.game_state import GameState
-from game.models import Question
-from channels.generic.websocket import AsyncWebsocketConsumer, WebsocketConsumer
+
 
 """ GameWorker - manages all active games """
 
@@ -42,8 +34,8 @@ class GameWorker(AsyncConsumer):
             self.current_players[channel_name] = game_code
 
     async def _remove_game(self, game_code):
-        print("Removing game...")
-        players = self.active_games[game_code].game_state.get_list_of_users_channels()
+        print(f"Removing game {game_code}")
+        players = self.active_games[game_code].players
         for p in players:
             await self.channel_layer.group_discard(game_code, p)
             del self.current_players[p]
